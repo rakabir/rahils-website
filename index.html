@@ -1,0 +1,1568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Crypts of Rahil — Dungeon Crawler</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a0f;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      font-family: 'Courier New', monospace;
+      color: #e0d4c0;
+      overflow: hidden;
+    }
+    h1 {
+      font-size: 1.6rem;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: #c9a84c;
+      text-shadow: 0 0 18px #c9a84c88;
+      margin-bottom: 8px;
+    }
+    #ui-bar {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      margin-bottom: 8px;
+      font-size: 0.85rem;
+      color: #aaa;
+    }
+    #hearts { display: flex; gap: 4px; align-items: center; }
+    .heart { font-size: 1.1rem; }
+    #room-info { color: #c9a84c88; font-size: 0.75rem; letter-spacing: 1px; }
+    #stats { color: #88bbff; font-size: 0.75rem; }
+    canvas {
+      border: 2px solid #2a2a3a;
+      box-shadow: 0 0 40px #00000088, 0 0 80px #0000ff11;
+      image-rendering: pixelated;
+      display: block;
+    }
+    #controls {
+      margin-top: 10px;
+      font-size: 0.7rem;
+      color: #555;
+      letter-spacing: 1px;
+    }
+    #overlay {
+      position: fixed;
+      inset: 0;
+      background: #000000cc;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+    }
+    #overlay h2 { font-size: 2.5rem; color: #c9a84c; text-shadow: 0 0 30px #c9a84c; margin-bottom: 12px; letter-spacing: 4px; }
+    #overlay p { color: #aaa; margin: 6px 0; font-size: 0.9rem; }
+    #overlay .hint { color: #666; font-size: 0.75rem; margin-top: 20px; }
+    #start-btn {
+      margin-top: 28px;
+      padding: 12px 40px;
+      background: #c9a84c22;
+      border: 1px solid #c9a84c;
+      color: #c9a84c;
+      font-family: 'Courier New', monospace;
+      font-size: 1rem;
+      letter-spacing: 3px;
+      cursor: pointer;
+      text-transform: uppercase;
+      transition: all 0.2s;
+    }
+    #start-btn:hover { background: #c9a84c44; box-shadow: 0 0 20px #c9a84c66; }
+    #minimap-canvas { border: 1px solid #2a2a3a; margin-left: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Crypts of Rahil</h1>
+  <div id="ui-bar">
+    <div id="hearts"></div>
+    <div id="stats"></div>
+    <div id="room-info"></div>
+    <canvas id="minimap-canvas" width="120" height="120"></canvas>
+  </div>
+  <canvas id="gameCanvas" width="800" height="560"></canvas>
+  <div id="controls">WASD / ARROWS — Move &nbsp;|&nbsp; IJKL / NUM-ARROWS — Shoot &nbsp;|&nbsp; R — Restart</div>
+
+  <div id="overlay">
+    <h2>CRYPTS OF RAHIL</h2>
+    <p>Explore the dungeon. Kill everything. Find the boss.</p>
+    <p style="color:#88bbff">Move: <b>WASD</b> or <b>Arrow Keys</b></p>
+    <p style="color:#ff8888">Shoot: <b>IJKL</b> or <b>Num-Pad Arrows</b></p>
+    <p style="color:#88ff88">Clear rooms to unlock doors. Collect items to grow stronger.</p>
+    <button id="start-btn">ENTER THE CRYPT</button>
+    <div class="hint">Press R anytime to restart</div>
+  </div>
+
+<script>
+"use strict";
+
+// ─── CONSTANTS ────────────────────────────────────────────────────────────────
+const CW = 800, CH = 560;           // canvas dimensions
+const TILE = 16;                     // tile size in pixels
+const ROOM_COLS = 15, ROOM_ROWS = 11;// tiles per room (excl. walls)
+const RW = (ROOM_COLS + 2) * TILE;  // full room pixel width  = 272
+const RH = (ROOM_ROWS + 2) * TILE;  // full room pixel height = 208
+// Offsets to center the room in the canvas
+const RX = (CW - RW) / 2;
+const RY = (CH - RH) / 2;
+
+// Grid for dungeon map generation (max 7×7 rooms)
+const MAP_W = 7, MAP_H = 7;
+
+// Colors / palette
+const PAL = {
+  floor:      '#1a1520',
+  floorAlt:   '#1e1828',
+  wall:       '#0d0b12',
+  wallTop:    '#2a2535',
+  doorOpen:   '#3a5040',
+  doorClosed: '#5a2a2a',
+  doorFrame:  '#2a2030',
+  player:     '#e8d8a0',
+  playerEye:  '#ff4444',
+  bulletP:    '#ffe080',
+  bulletE:    '#ff5040',
+  crawler:    '#884444',
+  charger:    '#b05030',
+  shooter:    '#4060a0',
+  boss:       '#883399',
+  bossHit:    '#ff00ff',
+  pickup:     '#55dd88',
+  item:       '#ddaa22',
+  heart:      '#dd2244',
+  halfHeart:  '#993322',
+  shadow:     '#00000060',
+  blood:      '#550010',
+  ui:         '#c9a84c',
+  itemRoom:   '#203040',
+  bossRoom:   '#301020',
+};
+
+// ─── UTILITIES ────────────────────────────────────────────────────────────────
+const rng = {
+  rand()    { return Math.random(); },
+  int(n)    { return Math.floor(Math.random() * n); },
+  range(a,b){ return a + Math.floor(Math.random() * (b - a + 1)); },
+  pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; },
+  bool(p=0.5){ return Math.random() < p; },
+};
+
+function dist(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+function rectOverlap(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x &&
+         a.y < b.y + b.h && a.y + a.h > b.y;
+}
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// ─── INPUT ────────────────────────────────────────────────────────────────────
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'KeyR') game && game.restart();
+  // prevent arrow key page scroll
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+});
+window.addEventListener('keyup',  e => { keys[e.code] = false; });
+
+// ─── TILE MAP ─────────────────────────────────────────────────────────────────
+// Room layout uses a 2D array of tile types
+// 0=floor, 1=wall, 2=door-N, 3=door-S, 4=door-W, 5=door-E
+// Doors occupy 3-wide gaps in the walls
+
+function buildRoomTiles(doors) {
+  // doors = { n, s, e, w } booleans
+  const cols = ROOM_COLS + 2, rows = ROOM_ROWS + 2;
+  const tiles = [];
+  for (let r = 0; r < rows; r++) {
+    tiles[r] = [];
+    for (let c = 0; c < cols; c++) {
+      // border = wall, interior = floor
+      const onBorder = r === 0 || r === rows-1 || c === 0 || c === cols-1;
+      tiles[r][c] = onBorder ? 1 : 0;
+    }
+  }
+  // carve door openings (3 tiles wide in center of each wall)
+  const midC = Math.floor(cols / 2);
+  const midR = Math.floor(rows / 2);
+  if (doors.n) for (let c = midC-1; c <= midC+1; c++) { tiles[0][c] = 0; }
+  if (doors.s) for (let c = midC-1; c <= midC+1; c++) { tiles[rows-1][c] = 0; }
+  if (doors.w) for (let r = midR-1; r <= midR+1; r++) { tiles[r][0] = 0; }
+  if (doors.e) for (let r = midR-1; r <= midR+1; r++) { tiles[r][cols-1] = 0; }
+  return tiles;
+}
+
+// ─── DUNGEON GENERATION ───────────────────────────────────────────────────────
+/*
+  Generate a dungeon map on a MAP_W × MAP_H grid.
+  Uses a random-walk + expansion approach inspired by BoI.
+  Returns { rooms: Map<"x,y" → RoomDef>, startKey, bossKey }
+*/
+function generateDungeon() {
+  const visited = new Set();
+  const queue  = [];
+  const rooms  = new Map();
+
+  // Start at center of grid
+  const sx = Math.floor(MAP_W/2), sy = Math.floor(MAP_H/2);
+  queue.push({x: sx, y: sy});
+  visited.add(`${sx},${sy}`);
+
+  const DIRS = [{dx:0,dy:-1,d:'n'},{dx:0,dy:1,d:'s'},{dx:-1,dy:0,d:'w'},{dx:1,dy:0,d:'e'}];
+  const TARGET_ROOMS = rng.range(10, 16);
+
+  // BFS random walk to carve rooms
+  while (visited.size < TARGET_ROOMS && queue.length) {
+    const idx = rng.int(queue.length);
+    const cur = queue[idx];
+    const shuffled = [...DIRS].sort(() => rng.rand() - 0.5);
+    let expanded = false;
+    for (const {dx, dy} of shuffled) {
+      const nx = cur.x + dx, ny = cur.y + dy;
+      if (nx < 0 || ny < 0 || nx >= MAP_W || ny >= MAP_H) continue;
+      const key = `${nx},${ny}`;
+      if (visited.has(key)) continue;
+      // prevent branching too wide (no room with >2 neighbors except start)
+      const neighbors = DIRS.filter(d => visited.has(`${nx+d.dx},${ny+d.dy}`)).length;
+      if (neighbors > 1 && rng.bool(0.7)) continue;
+      visited.add(key);
+      queue.push({x: nx, y: ny});
+      expanded = true;
+      if (visited.size >= TARGET_ROOMS) break;
+    }
+    if (!expanded) queue.splice(idx, 1);
+  }
+
+  // Determine connections
+  const keys = [...visited];
+  const startKey = `${sx},${sy}`;
+
+  // Find room farthest from start for boss
+  let bossKey = startKey, maxDist = 0;
+  for (const k of keys) {
+    const [kx, ky] = k.split(',').map(Number);
+    const d = Math.abs(kx - sx) + Math.abs(ky - sy);
+    if (d > maxDist && k !== startKey) { maxDist = d; bossKey = k; }
+  }
+
+  // Pick item rooms (dead-ends that aren't start/boss)
+  const deadEnds = keys.filter(k => {
+    if (k === startKey || k === bossKey) return false;
+    const [kx, ky] = k.split(',').map(Number);
+    return DIRS.filter(({dx,dy}) => visited.has(`${kx+dx},${ky+dy}`)).length === 1;
+  });
+  const itemRoomCount = Math.min(2, deadEnds.length);
+  const itemRooms = new Set(deadEnds.slice(0, itemRoomCount));
+
+  // Build RoomDef objects
+  for (const k of keys) {
+    const [rx, ry] = k.split(',').map(Number);
+    const doors = {
+      n: visited.has(`${rx},${ry-1}`),
+      s: visited.has(`${rx},${ry+1}`),
+      w: visited.has(`${rx-1},${ry}`),
+      e: visited.has(`${rx+1},${ry}`),
+    };
+    const type = k === bossKey ? 'boss' :
+                 k === startKey ? 'start' :
+                 itemRooms.has(k) ? 'item' : 'normal';
+    rooms.set(k, {
+      x: rx, y: ry,
+      type,
+      doors,          // which walls have openings
+      locked: true,   // doors locked until enemies cleared
+      cleared: k === startKey, // start room pre-cleared
+      tiles: null,    // built lazily
+      enemies: [],
+      items: [],
+      pickups: [],
+      decorations: [], // blood splatters, etc.
+    });
+  }
+
+  return { rooms, startKey, bossKey };
+}
+
+// ─── ENEMY DEFINITIONS ────────────────────────────────────────────────────────
+/*
+  3 normal enemy types + boss:
+  1. Crawler  – slow random walk, deals 1 dmg on contact
+  2. Charger  – dashes toward player at intervals, deals 1.5 dmg
+  3. Shooter  – keeps distance, fires projectiles every ~2s, deals 0.5 dmg/bullet
+  4. Boss     – large, phases: wanders + shoots burst, then charges, more HP
+*/
+
+class Entity {
+  constructor(x, y, w, h) {
+    this.x = x; this.y = y;
+    this.w = w; this.h = h;
+    this.vx = 0; this.vy = 0;
+    this.dead = false;
+  }
+  get cx() { return this.x + this.w/2; }
+  get cy() { return this.y + this.h/2; }
+  get rect() { return {x:this.x, y:this.y, w:this.w, h:this.h}; }
+}
+
+class Player extends Entity {
+  constructor(x, y) {
+    super(x, y, 22, 22);
+    this.maxHp = 6;      // in half-hearts
+    this.hp = 6;
+    this.speed = 2.4;
+    this.dmg = 1;
+    this.fireRate = 0.38; // seconds between shots
+    this.fireCooldown = 0;
+    this.iframes = 0;     // invincibility frames after hit
+    this.shotSpeed = 5.5;
+    this.shotRange = 380;
+    this.coins = 0;
+    // visual
+    this.walkAnim = 0;
+    this.facingX = 0; this.facingY = 1;
+  }
+}
+
+class Crawler extends Entity {
+  // Wanders randomly, slowly gravitates toward player
+  constructor(x, y) {
+    super(x, y, 20, 20);
+    this.hp = 3; this.maxHp = 3;
+    this.speed = 1.0;
+    this.dmg = 0.5;       // half-heart on contact
+    this.type = 'crawler';
+    this.moveTimer = 0;
+    this.moveDirX = rng.rand()*2-1;
+    this.moveDirY = rng.rand()*2-1;
+    this.anim = 0;
+    this.hitFlash = 0;
+  }
+}
+
+class Charger extends Entity {
+  // Pauses, then charges at player in a straight line
+  constructor(x, y) {
+    super(x, y, 22, 22);
+    this.hp = 5; this.maxHp = 5;
+    this.speed = 0;
+    this.dmg = 1;         // full heart
+    this.type = 'charger';
+    this.state = 'idle';  // idle → windup → charge → recover
+    this.stateTimer = rng.range(60, 120);
+    this.chargeDirX = 0; this.chargeDirY = 0;
+    this.chargeSpeed = 6;
+    this.anim = 0;
+    this.hitFlash = 0;
+  }
+}
+
+class Shooter extends Entity {
+  // Floats, keeps distance from player, fires bullets
+  constructor(x, y) {
+    super(x, y, 18, 18);
+    this.hp = 4; this.maxHp = 4;
+    this.speed = 0.9;
+    this.dmg = 0;
+    this.type = 'shooter';
+    this.shotCooldown = rng.range(80, 140);
+    this.preferredDist = 160;
+    this.anim = 0;
+    this.hitFlash = 0;
+    this.floatPhase = rng.rand() * Math.PI * 2;
+  }
+}
+
+class Boss extends Entity {
+  constructor(x, y) {
+    super(x, y, 52, 52);
+    this.hp = 60; this.maxHp = 60;
+    this.speed = 1.2;
+    this.dmg = 1.5;
+    this.type = 'boss';
+    this.phase = 1;
+    this.stateTimer = 0;
+    this.state = 'wander';
+    this.shotCooldown = 0;
+    this.chargeDirX = 0; this.chargeDirY = 0;
+    this.anim = 0;
+    this.hitFlash = 0;
+    this.wanderDirX = 1; this.wanderDirY = 0;
+    this.wanderTimer = 60;
+  }
+}
+
+class Projectile extends Entity {
+  constructor(x, y, vx, vy, dmg, owner, range) {
+    const sz = owner === 'player' ? 7 : 6;
+    super(x - sz/2, y - sz/2, sz, sz);
+    this.vx = vx; this.vy = vy;
+    this.dmg = dmg;
+    this.owner = owner;   // 'player' or 'enemy'
+    this.range = range || 300;
+    this.traveled = 0;
+    this.anim = 0;
+  }
+}
+
+class Pickup extends Entity {
+  // Dropped from enemies — coins, hearts
+  constructor(x, y, kind) {
+    super(x - 8, y - 8, 16, 16);
+    this.kind = kind; // 'coin' | 'halfHeart' | 'heart'
+    this.anim = Math.random() * Math.PI * 2;
+    this.collected = false;
+  }
+}
+
+class Item extends Entity {
+  // Permanent upgrades sitting on pedestals
+  constructor(x, y, type) {
+    super(x - 10, y - 10, 20, 20);
+    this.itemType = type;
+    this.collected = false;
+    this.anim = 0;
+  }
+}
+
+// All possible item upgrades
+const ITEM_TYPES = [
+  { id: 'speed',     label: 'Quickstep',    color: '#44ffaa', desc: 'Move faster',
+    apply: p => { p.speed += 0.5; } },
+  { id: 'damage',    label: 'Blood Fang',   color: '#ff4466', desc: 'Tears deal more damage',
+    apply: p => { p.dmg += 0.5; } },
+  { id: 'firerate',  label: "Tear Duct",    color: '#44aaff', desc: 'Fire rate increased',
+    apply: p => { p.fireRate = Math.max(0.1, p.fireRate - 0.07); } },
+  { id: 'range',     label: 'Bifocals',     color: '#ffdd44', desc: 'Tears fly farther',
+    apply: p => { p.shotRange += 80; } },
+  { id: 'heart',     label: 'Dead Cat',     color: '#ff2244', desc: '+1 heart container',
+    apply: p => { p.maxHp += 2; p.hp = Math.min(p.hp + 2, p.maxHp); } },
+  { id: 'shotspeed', label: 'Polyphemus',   color: '#aa66ff', desc: 'Tears move faster',
+    apply: p => { p.shotSpeed += 1; } },
+];
+
+// ─── ROOM SPAWNING ────────────────────────────────────────────────────────────
+function spawnEnemiesForRoom(room, depth) {
+  // depth = how many rooms from start (affects difficulty)
+  const enemies = [];
+  if (room.type === 'start' || room.type === 'item') return enemies;
+  if (room.type === 'boss') {
+    // Center of room
+    enemies.push(new Boss(RX + RW/2 - 26, RY + RH/2 - 26));
+    return enemies;
+  }
+
+  const count = rng.range(2 + depth, 4 + depth * 2);
+  const safeMargin = 60;
+  const minX = RX + TILE + safeMargin;
+  const maxX = RX + RW - TILE - safeMargin;
+  const minY = RY + TILE + safeMargin;
+  const maxY = RY + RH - TILE - safeMargin;
+
+  for (let i = 0; i < count; i++) {
+    const ex = rng.range(minX, maxX);
+    const ey = rng.range(minY, maxY);
+    const roll = rng.rand();
+    if (depth >= 2 && roll < 0.35) {
+      enemies.push(new Shooter(ex, ey));
+    } else if (depth >= 1 && roll < 0.6) {
+      enemies.push(new Charger(ex, ey));
+    } else {
+      enemies.push(new Crawler(ex, ey));
+    }
+    // Scale HP with depth
+    const e = enemies[enemies.length - 1];
+    e.hp = Math.round(e.hp * (1 + depth * 0.15));
+    e.maxHp = e.hp;
+  }
+  return enemies;
+}
+
+function spawnItemsForRoom(room) {
+  if (room.type !== 'item') return [];
+  const centerX = RX + RW/2;
+  const centerY = RY + RH/2;
+  const itemType = rng.pick(ITEM_TYPES);
+  return [new Item(centerX, centerY, itemType)];
+}
+
+// ─── RENDERING HELPERS ────────────────────────────────────────────────────────
+function drawRoundRect(ctx, x, y, w, h, r, fill, stroke) {
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.lineTo(x+w-r, y);
+  ctx.quadraticCurveTo(x+w, y, x+w, y+r);
+  ctx.lineTo(x+w, y+h-r);
+  ctx.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+  ctx.lineTo(x+r, y+h);
+  ctx.quadraticCurveTo(x, y+h, x, y+h-r);
+  ctx.lineTo(x, y+r);
+  ctx.quadraticCurveTo(x, y, x+r, y);
+  ctx.closePath();
+  if (fill)  { ctx.fillStyle = fill;   ctx.fill(); }
+  if (stroke){ ctx.strokeStyle = stroke; ctx.stroke(); }
+}
+
+function drawHeart(ctx, x, y, full) {
+  // Simple pixel heart
+  ctx.fillStyle = full ? PAL.heart : PAL.halfHeart;
+  const pts = full
+    ? [[1,0],[2,0],[4,0],[5,0],[0,1],[1,1],[2,1],[3,1],[4,1],[5,1],[6,1],
+       [0,2],[1,2],[2,2],[3,2],[4,2],[5,2],[6,2],
+       [1,3],[2,3],[3,3],[4,3],[5,3],
+       [2,4],[3,4],[4,4],[3,5]]
+    : [[1,0],[2,0],[0,1],[1,1],[2,1],[3,1],[0,2],[1,2],[2,2],[3,2],
+       [1,3],[2,3],[3,3],[2,4],[3,4],[3,5]];
+  for (const [px,py] of pts) ctx.fillRect(x+px*2, y+py*2, 2, 2);
+}
+
+// ─── ROOM RENDERER ────────────────────────────────────────────────────────────
+function renderRoom(ctx, room, tick) {
+  const tiles = room.tiles;
+  if (!tiles) return;
+
+  // Draw checkerboard floor
+  for (let r = 0; r < tiles.length; r++) {
+    for (let c = 0; c < tiles[r].length; c++) {
+      const tx = RX + c * TILE, ty = RY + r * TILE;
+      const tile = tiles[r][c];
+      if (tile === 0) {
+        ctx.fillStyle = (r + c) % 2 === 0 ? PAL.floor : PAL.floorAlt;
+        ctx.fillRect(tx, ty, TILE, TILE);
+      } else if (tile === 1) {
+        // Wall with top highlight
+        ctx.fillStyle = PAL.wall;
+        ctx.fillRect(tx, ty, TILE, TILE);
+        ctx.fillStyle = PAL.wallTop;
+        ctx.fillRect(tx, ty, TILE, 3);
+      }
+    }
+  }
+
+  // Door overlays (show locked/open doors on valid openings)
+  const cols = tiles[0].length, rows = tiles.length;
+  const midC = Math.floor(cols / 2);
+  const midR = Math.floor(rows / 2);
+
+  function drawDoor(cx, cy, horiz) {
+    const doorColor = room.cleared ? PAL.doorOpen : PAL.doorClosed;
+    // Door frame
+    if (horiz) {
+      ctx.fillStyle = PAL.doorFrame;
+      ctx.fillRect(RX + (cx-1)*TILE - 4, RY + cy*TILE, 4, TILE);
+      ctx.fillRect(RX + (cx+2)*TILE, RY + cy*TILE, 4, TILE);
+      // Door fill
+      ctx.fillStyle = doorColor;
+      ctx.fillRect(RX + (cx-1)*TILE, RY + cy*TILE + 2, TILE*3, TILE - 4);
+    } else {
+      ctx.fillStyle = PAL.doorFrame;
+      ctx.fillRect(RX + cx*TILE, RY + (cy-1)*TILE - 4, TILE, 4);
+      ctx.fillRect(RX + cx*TILE, RY + (cy+2)*TILE, TILE, 4);
+      ctx.fillStyle = doorColor;
+      ctx.fillRect(RX + cx*TILE + 2, RY + (cy-1)*TILE, TILE - 4, TILE*3);
+    }
+  }
+
+  if (room.doors.n) drawDoor(midC-1, 0, false);
+  if (room.doors.s) drawDoor(midC-1, rows-3, false);
+  if (room.doors.w) drawDoor(0, midR-1, true);
+  if (room.doors.e) drawDoor(cols-3, midR-1, true);
+
+  // Boss/item room tinted floor overlay
+  if (room.type === 'boss') {
+    ctx.fillStyle = '#3300110a';
+    ctx.fillRect(RX+TILE, RY+TILE, ROOM_COLS*TILE, ROOM_ROWS*TILE);
+  }
+  if (room.type === 'item') {
+    ctx.fillStyle = '#0011330a';
+    ctx.fillRect(RX+TILE, RY+TILE, ROOM_COLS*TILE, ROOM_ROWS*TILE);
+  }
+
+  // Blood decorations
+  for (const d of room.decorations) {
+    ctx.globalAlpha = 0.4;
+    ctx.fillStyle = PAL.blood;
+    ctx.beginPath();
+    ctx.ellipse(d.x, d.y, d.rx, d.ry, d.rot, 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+function renderEntity(ctx, e, tick) {
+  if (e.dead) return;
+
+  const flash = e.hitFlash > 0;
+
+  if (e instanceof Player) {
+    // Body (circle-ish)
+    const bob = Math.sin(tick * 0.15) * 1.5;
+    ctx.fillStyle = flash ? '#ffffff' : PAL.player;
+    drawRoundRect(ctx, e.x, e.y + bob, e.w, e.h, 8, ctx.fillStyle);
+    // Eye
+    const eyeOffX = e.facingX * 4, eyeOffY = e.facingY * 4;
+    ctx.fillStyle = PAL.playerEye;
+    ctx.beginPath();
+    ctx.arc(e.cx + eyeOffX, e.cy + eyeOffY + bob, 3.5, 0, Math.PI*2);
+    ctx.fill();
+    // Tear streak accent
+    ctx.fillStyle = '#8888ff44';
+    ctx.beginPath();
+    ctx.arc(e.cx - eyeOffX*0.5, e.cy - eyeOffY*0.5 + bob, 2, 0, Math.PI*2);
+    ctx.fill();
+
+  } else if (e instanceof Crawler) {
+    const col = flash ? '#ffffff' : PAL.crawler;
+    const wobble = Math.sin(tick * 0.12 + e.anim) * 2;
+    // Body
+    drawRoundRect(ctx, e.x, e.y + wobble, e.w, e.h, 5, col);
+    // Eyes (two small)
+    ctx.fillStyle = '#ffddaa';
+    ctx.fillRect(e.x + 4, e.y + wobble + 5, 4, 4);
+    ctx.fillRect(e.x + 12, e.y + wobble + 5, 4, 4);
+    // Legs
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < 4; i++) {
+      const lx = e.x + (i < 2 ? -4 : e.w + 4);
+      const ly = e.y + wobble + 6 + (i%2)*6;
+      ctx.beginPath();
+      ctx.moveTo(e.x + (i < 2 ? 2 : e.w-2), ly);
+      ctx.lineTo(lx, ly + Math.sin(tick*0.18 + i)*3);
+      ctx.stroke();
+    }
+    drawHealthBar(ctx, e);
+
+  } else if (e instanceof Charger) {
+    const col = flash ? '#ffffff' : PAL.charger;
+    const squeeze = e.state === 'windup' ? 0.85 : 1;
+    ctx.save();
+    ctx.translate(e.cx, e.cy);
+    ctx.scale(squeeze, 1/squeeze);
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.arc(0, 0, e.w/2, 0, Math.PI*2);
+    ctx.fill();
+    // Horns
+    ctx.fillStyle = '#ffcc44';
+    ctx.beginPath();
+    ctx.moveTo(-5, -e.h/2);
+    ctx.lineTo(-8, -e.h/2 - 8);
+    ctx.lineTo(-2, -e.h/2 - 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(5, -e.h/2);
+    ctx.lineTo(8, -e.h/2 - 8);
+    ctx.lineTo(2, -e.h/2 - 2);
+    ctx.fill();
+    // Eye
+    ctx.fillStyle = '#ff2200';
+    ctx.beginPath();
+    ctx.arc(0, -2, 4, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+    drawHealthBar(ctx, e);
+
+  } else if (e instanceof Shooter) {
+    const col = flash ? '#ffffff' : PAL.shooter;
+    const float = Math.sin(tick * 0.08 + e.floatPhase) * 3;
+    // Shadow
+    ctx.fillStyle = PAL.shadow;
+    ctx.beginPath();
+    ctx.ellipse(e.cx, e.cy + e.h/2 + 4, e.w/2, 4, 0, 0, Math.PI*2);
+    ctx.fill();
+    // Body (diamond shape)
+    ctx.save();
+    ctx.translate(e.cx, e.cy + float);
+    ctx.rotate(tick * 0.02);
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.moveTo(0, -e.h/2);
+    ctx.lineTo(e.w/2, 0);
+    ctx.lineTo(0, e.h/2);
+    ctx.lineTo(-e.w/2, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#aaddff';
+    ctx.beginPath();
+    ctx.arc(0, 0, 4, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+    drawHealthBar(ctx, e);
+
+  } else if (e instanceof Boss) {
+    const col = flash ? PAL.bossHit : PAL.boss;
+    const pulse = 1 + Math.sin(tick * 0.06) * 0.04;
+    ctx.save();
+    ctx.translate(e.cx, e.cy);
+    ctx.scale(pulse, pulse);
+    // Body
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.arc(0, 0, e.w/2, 0, Math.PI*2);
+    ctx.fill();
+    // Dark inner ring
+    ctx.strokeStyle = '#00000044';
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.arc(0, 0, e.w/2 - 8, 0, Math.PI*2);
+    ctx.stroke();
+    // Eyes (three eyes for menace)
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(-10, -5, 6, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(10, -5, 6, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(0, 6, 6, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#ff0044';
+    ctx.beginPath(); ctx.arc(-10, -5, 3, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(10, -5, 3, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(0, 6, 3, 0, Math.PI*2); ctx.fill();
+    // Spikes
+    ctx.fillStyle = '#550066';
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2 + tick * 0.015;
+      ctx.save();
+      ctx.rotate(angle);
+      ctx.beginPath();
+      ctx.moveTo(e.w/2, 0);
+      ctx.lineTo(e.w/2 + 14, -4);
+      ctx.lineTo(e.w/2 + 14, 4);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+    // Boss HP bar (special, large)
+    const barW = 300, barH = 12;
+    const bx = CW/2 - barW/2, by = CH - 30;
+    ctx.fillStyle = '#22002244';
+    ctx.fillRect(bx-2, by-2, barW+4, barH+4);
+    ctx.fillStyle = '#220022';
+    ctx.fillRect(bx, by, barW, barH);
+    ctx.fillStyle = '#cc44ff';
+    ctx.fillRect(bx, by, barW * (e.hp/e.maxHp), barH);
+    ctx.strokeStyle = '#884499';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx, by, barW, barH);
+    ctx.fillStyle = '#ffaaff';
+    ctx.font = '9px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText('BOSS', CW/2, by - 3);
+
+  } else if (e instanceof Projectile) {
+    const col = e.owner === 'player' ? PAL.bulletP : PAL.bulletE;
+    const sz = e.owner === 'player' ? 7 : 6;
+    ctx.save();
+    ctx.translate(e.cx, e.cy);
+    ctx.rotate(Math.atan2(e.vy, e.vx));
+    // Teardrop shape
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, sz * 1.2, sz * 0.7, 0, 0, Math.PI*2);
+    ctx.fill();
+    // Glow
+    ctx.globalAlpha = 0.4;
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, sz * 2, sz * 1.2, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.restore();
+
+  } else if (e instanceof Pickup) {
+    const bob = Math.sin(tick * 0.1 + e.anim) * 2;
+    if (e.kind === 'coin') {
+      ctx.fillStyle = '#ffdd44';
+      ctx.beginPath();
+      ctx.arc(e.cx, e.cy + bob, 6, 0, Math.PI*2);
+      ctx.fill();
+      ctx.fillStyle = '#ffff88';
+      ctx.beginPath();
+      ctx.arc(e.cx - 1, e.cy + bob - 1, 2, 0, Math.PI*2);
+      ctx.fill();
+    } else {
+      drawHeart(ctx, e.x, e.y + bob, e.kind === 'heart');
+    }
+
+  } else if (e instanceof Item) {
+    const bob = Math.sin(tick * 0.07 + e.anim) * 3;
+    // Pedestal
+    ctx.fillStyle = '#3a3040';
+    ctx.fillRect(e.cx - 12, e.cy + 8, 24, 8);
+    ctx.fillStyle = '#554466';
+    ctx.fillRect(e.cx - 10, e.cy + 6, 20, 4);
+    // Item glow
+    ctx.globalAlpha = 0.3 + Math.sin(tick * 0.07) * 0.1;
+    ctx.fillStyle = e.itemType.color;
+    ctx.beginPath();
+    ctx.arc(e.cx, e.cy + bob, 18, 0, Math.PI*2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    // Item orb
+    ctx.fillStyle = e.itemType.color;
+    ctx.beginPath();
+    ctx.arc(e.cx, e.cy + bob, 9, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff88';
+    ctx.beginPath();
+    ctx.arc(e.cx - 3, e.cy + bob - 3, 3, 0, Math.PI*2);
+    ctx.fill();
+    // Label
+    ctx.fillStyle = '#ffffff99';
+    ctx.font = '8px Courier New';
+    ctx.textAlign = 'center';
+    ctx.fillText(e.itemType.label, e.cx, e.cy + bob + 26);
+  }
+}
+
+function drawHealthBar(ctx, e) {
+  const barW = e.w + 4, barH = 4;
+  const bx = e.x - 2, by = e.y - 8;
+  ctx.fillStyle = '#110000';
+  ctx.fillRect(bx, by, barW, barH);
+  const ratio = e.hp / e.maxHp;
+  ctx.fillStyle = ratio > 0.5 ? '#33cc44' : ratio > 0.25 ? '#ffaa00' : '#ff3333';
+  ctx.fillRect(bx, by, Math.round(barW * ratio), barH);
+}
+
+// ─── MINIMAP ──────────────────────────────────────────────────────────────────
+function renderMinimap(mmCtx, dungeon, currentKey) {
+  mmCtx.clearRect(0, 0, 120, 120);
+  mmCtx.fillStyle = '#0a0a10';
+  mmCtx.fillRect(0, 0, 120, 120);
+
+  const cellW = 14, cellH = 12, gap = 2;
+  const offX = (120 - MAP_W * (cellW + gap)) / 2;
+  const offY = (120 - MAP_H * (cellH + gap)) / 2;
+
+  for (const [key, room] of dungeon.rooms) {
+    const rx = room.x, ry = room.y;
+    const px = offX + rx * (cellW + gap);
+    const py = offY + ry * (cellH + gap);
+
+    let col = '#2a2535';
+    if (room.type === 'boss')  col = '#4a1830';
+    if (room.type === 'item')  col = '#1a3040';
+    if (room.cleared) col = room.type === 'boss' ? '#6a2850' :
+                            room.type === 'item' ? '#2a5060' : '#2a4535';
+
+    mmCtx.fillStyle = col;
+    mmCtx.fillRect(px, py, cellW, cellH);
+
+    if (key === currentKey) {
+      mmCtx.strokeStyle = '#c9a84c';
+      mmCtx.lineWidth = 1.5;
+      mmCtx.strokeRect(px, py, cellW, cellH);
+    }
+
+    // Door connectors
+    if (room.doors.e) {
+      mmCtx.fillStyle = col;
+      mmCtx.fillRect(px + cellW, py + cellH/2 - 1, gap, 2);
+    }
+    if (room.doors.s) {
+      mmCtx.fillStyle = col;
+      mmCtx.fillRect(px + cellW/2 - 1, py + cellH, 2, gap);
+    }
+  }
+
+  // Legend
+  mmCtx.fillStyle = '#c9a84c88';
+  mmCtx.font = '7px Courier New';
+  mmCtx.textAlign = 'left';
+  mmCtx.fillText('B=Boss  ★=Item', 2, 117);
+}
+
+// ─── PARTICLE SYSTEM ─────────────────────────────────────────────────────────
+class Particle {
+  constructor(x, y, vx, vy, color, life, size=3) {
+    this.x=x; this.y=y; this.vx=vx; this.vy=vy;
+    this.color=color; this.life=life; this.maxLife=life;
+    this.size=size;
+  }
+  update() {
+    this.x += this.vx; this.y += this.vy;
+    this.vx *= 0.9; this.vy *= 0.9;
+    this.life--;
+    return this.life > 0;
+  }
+  draw(ctx) {
+    ctx.globalAlpha = this.life / this.maxLife;
+    ctx.fillStyle = this.color;
+    ctx.fillRect(this.x - this.size/2, this.y - this.size/2, this.size, this.size);
+    ctx.globalAlpha = 1;
+  }
+}
+
+// ─── GAME CORE ────────────────────────────────────────────────────────────────
+class Game {
+  constructor() {
+    this.canvas = document.getElementById('gameCanvas');
+    this.ctx    = this.canvas.getContext('2d');
+    this.mmCtx  = document.getElementById('minimap-canvas').getContext('2d');
+    this.overlay= document.getElementById('overlay');
+
+    this.tick = 0;
+    this.running = false;
+    this.won = false;
+    this.lost = false;
+
+    this.particles = [];
+    this.projectiles = [];
+
+    this.init();
+    this.loop();
+  }
+
+  init() {
+    // Generate dungeon
+    const dung = generateDungeon();
+    this.rooms    = dung.rooms;
+    this.startKey = dung.startKey;
+    this.bossKey  = dung.bossKey;
+    this.currentKey = this.startKey;
+
+    // Pre-build tiles and spawn entities for all rooms
+    let depth = 0;
+    // BFS from start to compute depth of each room
+    const depthMap = new Map();
+    const bfsQ = [this.startKey];
+    depthMap.set(this.startKey, 0);
+    while (bfsQ.length) {
+      const k = bfsQ.shift();
+      const room = this.rooms.get(k);
+      const [rx, ry] = k.split(',').map(Number);
+      const DIRS4 = [{dx:0,dy:-1},{dx:0,dy:1},{dx:-1,dy:0},{dx:1,dy:0}];
+      for (const {dx,dy} of DIRS4) {
+        const nk = `${rx+dx},${ry+dy}`;
+        if (this.rooms.has(nk) && !depthMap.has(nk)) {
+          depthMap.set(nk, depthMap.get(k) + 1);
+          bfsQ.push(nk);
+        }
+      }
+    }
+
+    for (const [key, room] of this.rooms) {
+      const d = depthMap.get(key) || 0;
+      room.tiles = buildRoomTiles(room.doors);
+      room.enemies = spawnEnemiesForRoom(room, d);
+      room.items   = spawnItemsForRoom(room);
+      room.pickups = [];
+      room.decorations = [];
+      // Boss and item rooms start cleared (no enemies blocking)
+      if (room.type === 'item' || room.type === 'start') room.cleared = true;
+    }
+
+    // Player in center of start room
+    this.player = new Player(RX + RW/2 - 11, RY + RH/2 - 11);
+
+    this.particles = [];
+    this.projectiles = [];
+    this.tick = 0;
+    this.won = false;
+    this.lost = false;
+    this.roomTransition = null; // {dx, dy, progress}
+    this.bossDefeated = false;
+
+    this.updateUI();
+  }
+
+  restart() {
+    this.overlay.style.display = 'none';
+    this.running = true;
+    this.init();
+  }
+
+  get currentRoom() {
+    return this.rooms.get(this.currentKey);
+  }
+
+  // ── INPUT ──────────────────────────────────────────────────────────────────
+  readInput() {
+    const p = this.player;
+
+    // Movement
+    let mx = 0, my = 0;
+    if (keys['KeyA'] || keys['ArrowLeft'])  mx -= 1;
+    if (keys['KeyD'] || keys['ArrowRight']) mx += 1;
+    if (keys['KeyW'] || keys['ArrowUp'])    my -= 1;
+    if (keys['KeyS'] || keys['ArrowDown'])  my += 1;
+    if (mx !== 0 && my !== 0) { mx *= 0.707; my *= 0.707; }
+    p.vx = mx * p.speed;
+    p.vy = my * p.speed;
+    if (mx !== 0) p.facingX = mx > 0 ? 1 : -1;
+    if (my !== 0) p.facingY = my > 0 ? 1 : -1;
+
+    // Shooting (IJKL or numpad)
+    p.fireCooldown -= 1/60;
+    if (p.fireCooldown <= 0) {
+      let sx = 0, sy = 0;
+      if (keys['KeyI'] || keys['Numpad8']) sy = -1;
+      if (keys['KeyK'] || keys['Numpad2']) sy =  1;
+      if (keys['KeyJ'] || keys['Numpad4']) sx = -1;
+      if (keys['KeyL'] || keys['Numpad6']) sx =  1;
+      if (sx !== 0 || sy !== 0) {
+        if (sx !== 0 && sy !== 0) { sx *= 0.707; sy *= 0.707; }
+        this.shoot(p.cx, p.cy, sx, sy, 'player');
+        p.fireCooldown = p.fireRate;
+        p.facingX = sx; p.facingY = sy;
+      }
+    }
+  }
+
+  shoot(x, y, dx, dy, owner, speed, dmg, range) {
+    const sp = speed || (owner === 'player' ? this.player.shotSpeed : 4.5);
+    const d  = dmg   || (owner === 'player' ? this.player.dmg : 0.5);
+    const r  = range || (owner === 'player' ? this.player.shotRange : 280);
+    this.projectiles.push(new Projectile(x, y, dx*sp, dy*sp, d, owner, r));
+  }
+
+  // ── MOVEMENT & COLLISION ──────────────────────────────────────────────────
+  moveEntity(e, vx, vy) {
+    const tiles = this.currentRoom.tiles;
+    const cols = tiles[0].length;
+    const rows = tiles.length;
+
+    // Move X
+    e.x += vx;
+    // Check wall collisions in X
+    const tileHits = this.getTileCollisions(e, tiles, cols, rows);
+    for (const t of tileHits) {
+      if (vx > 0) e.x = t.tx - e.w;
+      else if (vx < 0) e.x = t.tx + TILE;
+    }
+
+    // Move Y
+    e.y += vy;
+    const tileHitsY = this.getTileCollisions(e, tiles, cols, rows);
+    for (const t of tileHitsY) {
+      if (vy > 0) e.y = t.ty - e.h;
+      else if (vy < 0) e.y = t.ty + TILE;
+    }
+  }
+
+  getTileCollisions(e, tiles, cols, rows) {
+    const hits = [];
+    // Check corners of entity bounding box
+    const corners = [
+      {x: e.x,        y: e.y},
+      {x: e.x + e.w,  y: e.y},
+      {x: e.x,        y: e.y + e.h},
+      {x: e.x + e.w,  y: e.y + e.h},
+    ];
+    for (const corner of corners) {
+      const tc = Math.floor((corner.x - RX) / TILE);
+      const tr = Math.floor((corner.y - RY) / TILE);
+      if (tr >= 0 && tr < rows && tc >= 0 && tc < cols) {
+        if (tiles[tr][tc] === 1) {
+          hits.push({ tx: RX + tc * TILE, ty: RY + tr * TILE });
+        }
+      }
+    }
+    return hits;
+  }
+
+  // ── ROOM TRANSITION ───────────────────────────────────────────────────────
+  checkDoorTransition() {
+    if (!this.currentRoom.cleared) return;
+    const p = this.player;
+    const room = this.currentRoom;
+    const tiles = room.tiles;
+    const cols = tiles[0].length, rows = tiles.length;
+    const midC = Math.floor(cols / 2);
+    const midR = Math.floor(rows / 2);
+
+    const DIRS = [
+      { dir: 'n', key: 'n', dx: 0,  dy: -1, cond: () => p.cy < RY + TILE/2 },
+      { dir: 's', key: 's', dx: 0,  dy:  1, cond: () => p.cy > RY + RH - TILE/2 },
+      { dir: 'w', key: 'w', dx: -1, dy:  0, cond: () => p.cx < RX + TILE/2 },
+      { dir: 'e', key: 'e', dx:  1, dy:  0, cond: () => p.cx > RX + RW - TILE/2 },
+    ];
+
+    const [rx, ry] = this.currentKey.split(',').map(Number);
+    for (const {dir, dx, dy, cond} of DIRS) {
+      if (!room.doors[dir]) continue;
+      if (!cond()) continue;
+      const nk = `${rx+dx},${ry+dy}`;
+      if (!this.rooms.has(nk)) continue;
+
+      // Transition!
+      this.currentKey = nk;
+      // Warp player to opposite side
+      if      (dir === 'n') { p.x = RX + RW/2 - p.w/2; p.y = RY + RH - TILE*2; }
+      else if (dir === 's') { p.x = RX + RW/2 - p.w/2; p.y = RY + TILE; }
+      else if (dir === 'w') { p.x = RX + RW - TILE*2;  p.y = RY + RH/2 - p.h/2; }
+      else if (dir === 'e') { p.x = RX + TILE;         p.y = RY + RH/2 - p.h/2; }
+
+      this.projectiles = []; // clear projectiles on room change
+      this.spawnFlashParticles(p.cx, p.cy, '#c9a84c', 20);
+      this.updateUI();
+      return;
+    }
+  }
+
+  // ── ENEMY AI ──────────────────────────────────────────────────────────────
+  updateEnemies() {
+    const p = this.player;
+    const room = this.currentRoom;
+
+    for (const e of room.enemies) {
+      if (e.dead) continue;
+      if (e.hitFlash > 0) e.hitFlash--;
+
+      if (e instanceof Crawler) {
+        e.anim++;
+        e.moveTimer--;
+        if (e.moveTimer <= 0) {
+          // Partially gravitate toward player
+          const angle = Math.atan2(p.cy - e.cy, p.cx - e.cx);
+          const rand  = Math.atan2(rng.rand()*2-1, rng.rand()*2-1);
+          const blend = 0.6; // 60% toward player
+          const a = angle * blend + rand * (1-blend);
+          e.moveDirX = Math.cos(a);
+          e.moveDirY = Math.sin(a);
+          e.moveTimer = rng.range(30, 80);
+        }
+        this.moveEntity(e, e.moveDirX * e.speed, e.moveDirY * e.speed);
+
+      } else if (e instanceof Charger) {
+        e.anim++;
+        e.stateTimer--;
+        if (e.state === 'idle' && e.stateTimer <= 0) {
+          e.state = 'windup';
+          e.stateTimer = 40;
+        } else if (e.state === 'windup' && e.stateTimer <= 0) {
+          // Lock direction toward player
+          const angle = Math.atan2(p.cy - e.cy, p.cx - e.cx);
+          e.chargeDirX = Math.cos(angle);
+          e.chargeDirY = Math.sin(angle);
+          e.state = 'charge';
+          e.stateTimer = 25;
+        } else if (e.state === 'charge') {
+          this.moveEntity(e, e.chargeDirX * e.chargeSpeed, e.chargeDirY * e.chargeSpeed);
+          if (e.stateTimer <= 0) { e.state = 'recover'; e.stateTimer = 50; }
+        } else if (e.state === 'recover' && e.stateTimer <= 0) {
+          e.state = 'idle';
+          e.stateTimer = rng.range(60, 120);
+        }
+
+      } else if (e instanceof Shooter) {
+        e.anim++;
+        const dx = p.cx - e.cx, dy = p.cy - e.cy;
+        const d  = Math.hypot(dx, dy) || 1;
+        // Maintain preferred distance
+        let moveX = 0, moveY = 0;
+        if (d < e.preferredDist - 20) { moveX = -dx/d; moveY = -dy/d; }
+        else if (d > e.preferredDist + 20) { moveX = dx/d; moveY = dy/d; }
+        // Slight lateral drift
+        moveX += Math.cos(e.floatPhase + e.anim*0.02) * 0.4;
+        moveY += Math.sin(e.floatPhase + e.anim*0.02) * 0.4;
+        const len = Math.hypot(moveX, moveY) || 1;
+        this.moveEntity(e, (moveX/len) * e.speed, (moveY/len) * e.speed);
+
+        e.shotCooldown--;
+        if (e.shotCooldown <= 0) {
+          const norm = Math.hypot(dx,dy)||1;
+          this.shoot(e.cx, e.cy, dx/norm, dy/norm, 'enemy');
+          e.shotCooldown = rng.range(100, 160);
+        }
+
+      } else if (e instanceof Boss) {
+        e.anim++;
+        e.stateTimer++;
+
+        // Phase 2 at 50% HP
+        if (e.hp <= e.maxHp * 0.5 && e.phase === 1) {
+          e.phase = 2;
+          this.spawnFlashParticles(e.cx, e.cy, '#ff00ff', 40);
+        }
+
+        const dx = p.cx - e.cx, dy = p.cy - e.cy;
+        const d  = Math.hypot(dx, dy) || 1;
+
+        if (e.state === 'wander') {
+          e.wanderTimer--;
+          if (e.wanderTimer <= 0) {
+            const angle = Math.atan2(dy, dx) + (rng.rand()-0.5) * Math.PI;
+            e.wanderDirX = Math.cos(angle);
+            e.wanderDirY = Math.sin(angle);
+            e.wanderTimer = rng.range(40, 80);
+          }
+          this.moveEntity(e, e.wanderDirX * e.speed, e.wanderDirY * e.speed);
+
+          // Fire pattern
+          e.shotCooldown--;
+          if (e.shotCooldown <= 0) {
+            const shots = e.phase === 2 ? 8 : 4;
+            for (let i = 0; i < shots; i++) {
+              const angle = (i / shots) * Math.PI * 2 + e.anim * 0.01;
+              this.shoot(e.cx, e.cy, Math.cos(angle), Math.sin(angle), 'enemy', 4, 0.5, 350);
+            }
+            if (e.phase === 2 && d < 200) {
+              // Aimed shot
+              this.shoot(e.cx, e.cy, dx/d, dy/d, 'enemy', 5, 1, 400);
+            }
+            e.shotCooldown = e.phase === 2 ? 60 : 90;
+          }
+
+          // Transition to charge
+          if (e.stateTimer > (e.phase === 2 ? 150 : 240)) {
+            e.state = 'charge';
+            e.stateTimer = 0;
+            const angle = Math.atan2(dy, dx);
+            e.chargeDirX = Math.cos(angle);
+            e.chargeDirY = Math.sin(angle);
+          }
+
+        } else if (e.state === 'charge') {
+          this.moveEntity(e, e.chargeDirX * (e.phase === 2 ? 5 : 3.5),
+                             e.chargeDirY * (e.phase === 2 ? 5 : 3.5));
+          if (e.stateTimer > 30) {
+            e.state = 'wander';
+            e.stateTimer = 0;
+            e.wanderTimer = 0;
+          }
+        }
+      }
+
+      // Clamp inside room
+      e.x = clamp(e.x, RX + TILE, RX + RW - TILE - e.w);
+      e.y = clamp(e.y, RY + TILE, RY + RH - TILE - e.h);
+    }
+
+    // Remove dead enemies
+    const alive = room.enemies.filter(e => !e.dead);
+    room.enemies = alive;
+    if (alive.length === 0 && !room.cleared) {
+      room.cleared = true;
+      this.spawnFlashParticles(RX+RW/2, RY+RH/2, '#c9a84c', 50);
+      if (this.currentKey === this.bossKey) {
+        this.bossDefeated = true;
+        setTimeout(() => this.win(), 2000);
+      }
+    }
+  }
+
+  // ── PROJECTILE UPDATE ────────────────────────────────────────────────────
+  updateProjectiles() {
+    const room = this.currentRoom;
+    const p = this.player;
+
+    for (const proj of this.projectiles) {
+      if (proj.dead) continue;
+      proj.x += proj.vx;
+      proj.y += proj.vy;
+      proj.traveled += Math.hypot(proj.vx, proj.vy);
+
+      // Out of range or out of room
+      if (proj.traveled > proj.range ||
+          proj.x < RX || proj.x > RX+RW ||
+          proj.y < RY || proj.y > RY+RH) {
+        proj.dead = true;
+        continue;
+      }
+
+      // Wall collision
+      const tiles = room.tiles;
+      const tc = Math.floor((proj.cx - RX) / TILE);
+      const tr = Math.floor((proj.cy - RY) / TILE);
+      if (tr >= 0 && tr < tiles.length && tc >= 0 && tc < tiles[0].length) {
+        if (tiles[tr][tc] === 1) {
+          proj.dead = true;
+          this.spawnFlashParticles(proj.cx, proj.cy, '#555', 4);
+          continue;
+        }
+      }
+
+      // Hit enemies (player projectiles)
+      if (proj.owner === 'player') {
+        for (const e of room.enemies) {
+          if (e.dead) continue;
+          if (rectOverlap(proj.rect, e.rect)) {
+            e.hp -= proj.dmg;
+            e.hitFlash = 8;
+            proj.dead = true;
+            this.spawnFlashParticles(proj.cx, proj.cy, PAL.bulletP, 8);
+            if (e.hp <= 0) {
+              e.dead = true;
+              this.onEnemyDeath(e);
+            }
+            break;
+          }
+        }
+      }
+
+      // Hit player (enemy projectiles)
+      if (proj.owner === 'enemy' && p.iframes <= 0) {
+        if (rectOverlap(proj.rect, p.rect)) {
+          this.damagePlayer(proj.dmg);
+          proj.dead = true;
+        }
+      }
+    }
+
+    this.projectiles = this.projectiles.filter(b => !b.dead);
+  }
+
+  onEnemyDeath(e) {
+    // Blood splatter decoration
+    this.currentRoom.decorations.push({
+      x: e.cx, y: e.cy,
+      rx: rng.range(10, 25), ry: rng.range(8, 18),
+      rot: rng.rand() * Math.PI,
+    });
+    this.spawnFlashParticles(e.cx, e.cy, PAL.blood, 20, 4);
+
+    // Drop chance
+    const roll = rng.rand();
+    if (roll < 0.15) {
+      this.currentRoom.pickups.push(new Pickup(e.cx, e.cy, 'halfHeart'));
+    } else if (roll < 0.35) {
+      this.currentRoom.pickups.push(new Pickup(e.cx, e.cy, 'coin'));
+    }
+  }
+
+  damagePlayer(amount) {
+    const p = this.player;
+    if (p.iframes > 0) return;
+    p.hp -= amount * 2; // stored in half-hearts
+    p.iframes = 90;
+    this.spawnFlashParticles(p.cx, p.cy, '#ff4444', 16);
+    this.updateUI();
+    if (p.hp <= 0) {
+      p.hp = 0;
+      this.gameOver();
+    }
+  }
+
+  // ── PICKUP / ITEM COLLISION ───────────────────────────────────────────────
+  updatePickups() {
+    const p = this.player;
+    const room = this.currentRoom;
+
+    for (const pk of room.pickups) {
+      if (pk.collected) continue;
+      pk.anim += 0.05;
+      if (rectOverlap(p.rect, pk.rect)) {
+        pk.collected = true;
+        if (pk.kind === 'coin') {
+          p.coins++;
+        } else if (pk.kind === 'halfHeart') {
+          p.hp = Math.min(p.maxHp, p.hp + 1);
+        } else if (pk.kind === 'heart') {
+          p.hp = Math.min(p.maxHp, p.hp + 2);
+        }
+        this.updateUI();
+        this.spawnFlashParticles(pk.cx, pk.cy, PAL.pickup, 12);
+      }
+    }
+    room.pickups = room.pickups.filter(pk => !pk.collected);
+
+    for (const it of room.items) {
+      if (it.collected) continue;
+      it.anim++;
+      if (rectOverlap(p.rect, it.rect)) {
+        it.collected = true;
+        it.itemType.apply(p);
+        this.spawnFlashParticles(it.cx, it.cy, it.itemType.color, 30);
+        this.updateUI();
+      }
+    }
+    room.items = room.items.filter(it => !it.collected);
+  }
+
+  // ── PLAYER / ENEMY CONTACT ────────────────────────────────────────────────
+  updateContactDamage() {
+    const p = this.player;
+    if (p.iframes > 0) { p.iframes--; return; }
+    for (const e of this.currentRoom.enemies) {
+      if (e.dead) continue;
+      if (rectOverlap(p.rect, e.rect)) {
+        this.damagePlayer(e.dmg);
+        return;
+      }
+    }
+  }
+
+  // ── PARTICLES ─────────────────────────────────────────────────────────────
+  spawnFlashParticles(x, y, color, count, size=3) {
+    for (let i = 0; i < count; i++) {
+      const angle = rng.rand() * Math.PI * 2;
+      const speed = rng.rand() * 3 + 1;
+      this.particles.push(new Particle(
+        x + (rng.rand()-0.5)*10,
+        y + (rng.rand()-0.5)*10,
+        Math.cos(angle)*speed, Math.sin(angle)*speed,
+        color, rng.range(15, 30), size
+      ));
+    }
+  }
+
+  // ── UI ─────────────────────────────────────────────────────────────────────
+  updateUI() {
+    const p = this.player;
+    const heartsEl = document.getElementById('hearts');
+    const statsEl  = document.getElementById('stats');
+    const roomEl   = document.getElementById('room-info');
+
+    heartsEl.innerHTML = '';
+    const fullHearts = Math.floor(p.hp / 2);
+    const half = p.hp % 2 === 1;
+    const emptyHearts = Math.floor(p.maxHp / 2) - fullHearts - (half ? 1 : 0);
+
+    // Build a small canvas per heart
+    for (let i = 0; i < fullHearts; i++) {
+      const hc = document.createElement('canvas');
+      hc.width = 14; hc.height = 14;
+      drawHeart(hc.getContext('2d'), 0, 0, true);
+      heartsEl.appendChild(hc);
+    }
+    if (half) {
+      const hc = document.createElement('canvas');
+      hc.width = 14; hc.height = 14;
+      drawHeart(hc.getContext('2d'), 0, 0, false);
+      heartsEl.appendChild(hc);
+    }
+    for (let i = 0; i < emptyHearts; i++) {
+      const span = document.createElement('span');
+      span.textContent = '♡';
+      span.style.color = '#333';
+      span.style.fontSize = '1rem';
+      heartsEl.appendChild(span);
+    }
+
+    const room = this.currentRoom;
+    statsEl.innerHTML = `DMG:${p.dmg.toFixed(1)} SPD:${p.speed.toFixed(1)} COINS:${p.coins}`;
+    roomEl.innerHTML = room ? `[${room.type.toUpperCase()} ROOM]` : '';
+  }
+
+  // ── WIN / LOSE ─────────────────────────────────────────────────────────────
+  win() {
+    this.won = true;
+    this.running = false;
+    const ov = this.overlay;
+    ov.innerHTML = `
+      <h2 style="color:#c9a84c">VICTORY!</h2>
+      <p style="color:#88ff88;margin:10px 0">The boss lies defeated.</p>
+      <p style="color:#aaa">You escaped the Crypts of Rahil.</p>
+      <p style="color:#88bbff;margin-top:12px">Coins collected: ${this.player.coins}</p>
+      <button id="start-btn" onclick="game.restart()" style="margin-top:28px;padding:12px 40px;background:#c9a84c22;border:1px solid #c9a84c;color:#c9a84c;font-family:Courier New,monospace;font-size:1rem;letter-spacing:3px;cursor:pointer">PLAY AGAIN</button>
+    `;
+    ov.style.display = 'flex';
+  }
+
+  gameOver() {
+    this.lost = true;
+    this.running = false;
+    const ov = this.overlay;
+    ov.innerHTML = `
+      <h2 style="color:#dd2244">YOU DIED</h2>
+      <p style="color:#aaa;margin:10px 0">The dungeon claims another soul.</p>
+      <p style="color:#88bbff">Coins collected: ${this.player.coins}</p>
+      <button id="start-btn" onclick="game.restart()" style="margin-top:28px;padding:12px 40px;background:#dd224422;border:1px solid #dd2244;color:#dd2244;font-family:Courier New,monospace;font-size:1rem;letter-spacing:3px;cursor:pointer">TRY AGAIN</button>
+    `;
+    ov.style.display = 'flex';
+  }
+
+  // ── MAIN LOOP ──────────────────────────────────────────────────────────────
+  update() {
+    if (!this.running) return;
+    this.tick++;
+
+    this.readInput();
+    const p = this.player;
+    this.moveEntity(p, p.vx, p.vy);
+
+    // Clamp player inside room (account for door openings)
+    p.x = clamp(p.x, RX + TILE, RX + RW - TILE - p.w);
+    p.y = clamp(p.y, RY + TILE, RY + RH - TILE - p.h);
+
+    this.checkDoorTransition();
+    this.updateEnemies();
+    this.updateProjectiles();
+    this.updatePickups();
+    this.updateContactDamage();
+
+    // Update particles
+    this.particles = this.particles.filter(pt => pt.update());
+
+    // Flicker minimap update every 30 ticks
+    if (this.tick % 30 === 0) {
+      renderMinimap(this.mmCtx, { rooms: this.rooms }, this.currentKey);
+    }
+  }
+
+  render() {
+    const ctx = this.ctx;
+    ctx.clearRect(0, 0, CW, CH);
+
+    // Background vignette
+    ctx.fillStyle = '#07060d';
+    ctx.fillRect(0, 0, CW, CH);
+
+    const room = this.currentRoom;
+    renderRoom(ctx, room, this.tick);
+
+    // Items and pickups
+    for (const it of room.items)   renderEntity(ctx, it, this.tick);
+    for (const pk of room.pickups) renderEntity(ctx, pk, this.tick);
+
+    // Enemies
+    for (const e of room.enemies) renderEntity(ctx, e, this.tick);
+
+    // Player (flicker when iframe)
+    if (this.player.iframes <= 0 || Math.floor(this.tick / 4) % 2 === 0) {
+      renderEntity(ctx, this.player, this.tick);
+    }
+
+    // Projectiles
+    for (const proj of this.projectiles) renderEntity(ctx, proj, this.tick);
+
+    // Particles
+    for (const pt of this.particles) pt.draw(ctx);
+
+    // Room cleared flash on door unlock
+    // (handled by particle bursts)
+
+    // Ambient vignette overlay
+    const vign = ctx.createRadialGradient(CW/2,CH/2,CW*0.25,CW/2,CH/2,CW*0.75);
+    vign.addColorStop(0, 'transparent');
+    vign.addColorStop(1, '#00000066');
+    ctx.fillStyle = vign;
+    ctx.fillRect(0, 0, CW, CH);
+  }
+
+  loop() {
+    this.update();
+    this.render();
+    requestAnimationFrame(() => this.loop());
+  }
+}
+
+// ─── BOOT ─────────────────────────────────────────────────────────────────────
+let game;
+document.getElementById('start-btn').addEventListener('click', () => {
+  document.getElementById('overlay').style.display = 'none';
+  if (!game) {
+    game = new Game();
+    game.running = true;
+    renderMinimap(game.mmCtx, { rooms: game.rooms }, game.currentKey);
+    game.updateUI();
+  } else {
+    game.restart();
+  }
+});
+
+// Allow R key even before first start
+window.addEventListener('keydown', e => {
+  if (e.code === 'KeyR' && game) game.restart();
+});
+</script>
+</body>
+</html>
