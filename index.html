@@ -969,6 +969,7 @@ class Game {
     this.lost = false;
     this.roomTransition = null; // {dx, dy, progress}
     this.bossDefeated = false;
+    this.transitionCooldown = 0;
 
     this.updateUI();
   }
@@ -1071,6 +1072,7 @@ class Game {
   // ── ROOM TRANSITION ───────────────────────────────────────────────────────
   checkDoorTransition() {
     if (!this.currentRoom.cleared) return;
+    if (this.transitionCooldown > 0) { this.transitionCooldown--; return; }
     const p = this.player;
     const room = this.currentRoom;
     const tiles = room.tiles;
@@ -1098,11 +1100,13 @@ class Game {
 
       // Transition!
       this.currentKey = nk;
-      // Warp player to opposite side
-      if      (dir === 'n') { p.x = RX + RW/2 - p.w/2; p.y = RY + RH - TILE*2; }
-      else if (dir === 's') { p.x = RX + RW/2 - p.w/2; p.y = RY + TILE; }
-      else if (dir === 'w') { p.x = RX + RW - TILE*2;  p.y = RY + RH/2 - p.h/2; }
-      else if (dir === 'e') { p.x = RX + TILE;         p.y = RY + RH/2 - p.h/2; }
+      this.transitionCooldown = 20; // prevent immediate re-trigger
+      // Warp player to opposite side — spawn 3 tiles from the wall so the
+      // opposite door trigger (1 tile from wall) is never immediately tripped
+      if      (dir === 'n') { p.x = RX + RW/2 - p.w/2; p.y = RY + RH - TILE*3 - p.h; }
+      else if (dir === 's') { p.x = RX + RW/2 - p.w/2; p.y = RY + TILE*3; }
+      else if (dir === 'w') { p.x = RX + RW - TILE*3 - p.w; p.y = RY + RH/2 - p.h/2; }
+      else if (dir === 'e') { p.x = RX + TILE*3;        p.y = RY + RH/2 - p.h/2; }
 
       this.projectiles = []; // clear projectiles on room change
       this.spawnFlashParticles(p.cx, p.cy, '#c9a84c', 20);
