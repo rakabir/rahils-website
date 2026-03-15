@@ -88,13 +88,13 @@
     <canvas id="minimap-canvas" width="120" height="120"></canvas>
   </div>
   <canvas id="gameCanvas" width="800" height="560"></canvas>
-  <div id="controls">WASD / ARROWS — Move &nbsp;|&nbsp; IJKL / NUM-ARROWS — Shoot &nbsp;|&nbsp; R — Restart</div>
+  <div id="controls">WASD — Move &nbsp;|&nbsp; Arrow Keys — Shoot &nbsp;|&nbsp; R — Restart</div>
 
   <div id="overlay">
     <h2>CRYPTS OF RAHIL</h2>
     <p>Explore the dungeon. Kill everything. Find the boss.</p>
-    <p style="color:#88bbff">Move: <b>WASD</b> or <b>Arrow Keys</b></p>
-    <p style="color:#ff8888">Shoot: <b>IJKL</b> or <b>Num-Pad Arrows</b></p>
+    <p style="color:#88bbff">Move: <b>WASD</b></p>
+    <p style="color:#ff8888">Shoot: <b>Arrow Keys</b></p>
     <p style="color:#88ff88">Clear rooms to unlock doors. Collect items to grow stronger.</p>
     <button id="start-btn">ENTER THE CRYPT</button>
     <div class="hint">Press R anytime to restart</div>
@@ -988,26 +988,26 @@ class Game {
   readInput() {
     const p = this.player;
 
-    // Movement
+    // Movement — WASD only (like BoI)
     let mx = 0, my = 0;
-    if (keys['KeyA'] || keys['ArrowLeft'])  mx -= 1;
-    if (keys['KeyD'] || keys['ArrowRight']) mx += 1;
-    if (keys['KeyW'] || keys['ArrowUp'])    my -= 1;
-    if (keys['KeyS'] || keys['ArrowDown'])  my += 1;
+    if (keys['KeyA']) mx -= 1;
+    if (keys['KeyD']) mx += 1;
+    if (keys['KeyW']) my -= 1;
+    if (keys['KeyS']) my += 1;
     if (mx !== 0 && my !== 0) { mx *= 0.707; my *= 0.707; }
     p.vx = mx * p.speed;
     p.vy = my * p.speed;
     if (mx !== 0) p.facingX = mx > 0 ? 1 : -1;
     if (my !== 0) p.facingY = my > 0 ? 1 : -1;
 
-    // Shooting (IJKL or numpad)
+    // Shooting — Arrow keys (like BoI)
     p.fireCooldown -= 1/60;
     if (p.fireCooldown <= 0) {
       let sx = 0, sy = 0;
-      if (keys['KeyI'] || keys['Numpad8']) sy = -1;
-      if (keys['KeyK'] || keys['Numpad2']) sy =  1;
-      if (keys['KeyJ'] || keys['Numpad4']) sx = -1;
-      if (keys['KeyL'] || keys['Numpad6']) sx =  1;
+      if (keys['ArrowUp'])    sy = -1;
+      if (keys['ArrowDown'])  sy =  1;
+      if (keys['ArrowLeft'])  sx = -1;
+      if (keys['ArrowRight']) sx =  1;
       if (sx !== 0 || sy !== 0) {
         if (sx !== 0 && sy !== 0) { sx *= 0.707; sy *= 0.707; }
         this.shoot(p.cx, p.cy, sx, sy, 'player');
