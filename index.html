@@ -319,7 +319,7 @@ class Player extends Entity {
     this.hp = 6;
     this.speed = 2.4;
     this.dmg = 1;
-    this.fireRate = 0.38; // seconds between shots
+    this.fireRate = 0.18; // seconds between shots
     this.fireCooldown = 0;
     this.iframes = 0;     // invincibility frames after hit
     this.shotSpeed = 5.5;
@@ -459,7 +459,7 @@ function spawnEnemiesForRoom(room, depth) {
     return enemies;
   }
 
-  const count = rng.range(2 + depth, 4 + depth * 2);
+  const count = rng.range(1, 2 + Math.min(depth, 2));
   const safeMargin = 60;
   const minX = RX + TILE + safeMargin;
   const maxX = RX + RW - TILE - safeMargin;
@@ -1071,8 +1071,9 @@ class Game {
 
   // ── ROOM TRANSITION ───────────────────────────────────────────────────────
   checkDoorTransition() {
-    if (!this.currentRoom.cleared) return;
+    // Always tick down cooldown so it doesn't freeze in non-cleared rooms
     if (this.transitionCooldown > 0) { this.transitionCooldown--; return; }
+    if (!this.currentRoom.cleared) return;
     const p = this.player;
     const room = this.currentRoom;
     const tiles = room.tiles;
@@ -1101,6 +1102,7 @@ class Game {
       // Transition!
       this.currentKey = nk;
       this.transitionCooldown = 20; // prevent immediate re-trigger
+      p.vx = 0; p.vy = 0; // kill momentum so player doesn't drift into a corner
       // Warp player to opposite side — spawn 3 tiles from the wall so the
       // opposite door trigger (1 tile from wall) is never immediately tripped
       if      (dir === 'n') { p.x = RX + RW/2 - p.w/2; p.y = RY + RH - TILE*3 - p.h; }
@@ -1497,13 +1499,13 @@ class Game {
       const dT = RY + (mr - 1) * TILE, dB = RY + (mr + 2) * TILE;
       // Only allow passage when room is cleared AND player is aligned with door
       if (!cr.cleared || !cr.doors.n || p.cx < dL || p.cx > dR)
-        p.y = Math.max(p.y, RY + TILE);
+        p.y = Math.max(p.y, RY + TILE + 1);
       if (!cr.cleared || !cr.doors.s || p.cx < dL || p.cx > dR)
-        p.y = Math.min(p.y, RY + RH - TILE - p.h);
+        p.y = Math.min(p.y, RY + RH - TILE - p.h - 1);
       if (!cr.cleared || !cr.doors.w || p.cy < dT || p.cy > dB)
-        p.x = Math.max(p.x, RX + TILE);
+        p.x = Math.max(p.x, RX + TILE + 1);
       if (!cr.cleared || !cr.doors.e || p.cy < dT || p.cy > dB)
-        p.x = Math.min(p.x, RX + RW - TILE - p.w);
+        p.x = Math.min(p.x, RX + RW - TILE - p.w - 1);
     }
 
     this.checkDoorTransition();
