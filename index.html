@@ -1078,11 +1078,15 @@ class Game {
     const midC = Math.floor(cols / 2);
     const midR = Math.floor(rows / 2);
 
+    // Door pixel bounds (3-tile opening centered on each wall)
+    const dL = RX + (midC - 1) * TILE, dR = RX + (midC + 2) * TILE;
+    const dT = RY + (midR - 1) * TILE, dB = RY + (midR + 2) * TILE;
+
     const DIRS = [
-      { dir: 'n', key: 'n', dx: 0,  dy: -1, cond: () => p.cy < RY + TILE/2 },
-      { dir: 's', key: 's', dx: 0,  dy:  1, cond: () => p.cy > RY + RH - TILE/2 },
-      { dir: 'w', key: 'w', dx: -1, dy:  0, cond: () => p.cx < RX + TILE/2 },
-      { dir: 'e', key: 'e', dx:  1, dy:  0, cond: () => p.cx > RX + RW - TILE/2 },
+      { dir: 'n', dx:  0, dy: -1, cond: () => p.y  < RY + TILE          && p.cx > dL && p.cx < dR },
+      { dir: 's', dx:  0, dy:  1, cond: () => p.y + p.h > RY + RH - TILE && p.cx > dL && p.cx < dR },
+      { dir: 'w', dx: -1, dy:  0, cond: () => p.x  < RX + TILE          && p.cy > dT && p.cy < dB },
+      { dir: 'e', dx:  1, dy:  0, cond: () => p.x + p.w > RX + RW - TILE && p.cy > dT && p.cy < dB },
     ];
 
     const [rx, ry] = this.currentKey.split(',').map(Number);
@@ -1479,9 +1483,24 @@ class Game {
     const p = this.player;
     this.moveEntity(p, p.vx, p.vy);
 
-    // Clamp player inside room (account for door openings)
-    p.x = clamp(p.x, RX + TILE, RX + RW - TILE - p.w);
-    p.y = clamp(p.y, RY + TILE, RY + RH - TILE - p.h);
+    // Clamp player inside room — but allow walking through door openings.
+    // Door spans 3 tiles centered on the mid column/row of each wall.
+    {
+      const cr = this.currentRoom;
+      const cols2 = cr.tiles[0].length, rows2 = cr.tiles.length;
+      const mc = Math.floor(cols2 / 2), mr = Math.floor(rows2 / 2);
+      const dL = RX + (mc - 1) * TILE, dR = RX + (mc + 2) * TILE;
+      const dT = RY + (mr - 1) * TILE, dB = RY + (mr + 2) * TILE;
+      // Only allow passage when room is cleared AND player is aligned with door
+      if (!cr.cleared || !cr.doors.n || p.cx < dL || p.cx > dR)
+        p.y = Math.max(p.y, RY + TILE);
+      if (!cr.cleared || !cr.doors.s || p.cx < dL || p.cx > dR)
+        p.y = Math.min(p.y, RY + RH - TILE - p.h);
+      if (!cr.cleared || !cr.doors.w || p.cy < dT || p.cy > dB)
+        p.x = Math.max(p.x, RX + TILE);
+      if (!cr.cleared || !cr.doors.e || p.cy < dT || p.cy > dB)
+        p.x = Math.min(p.x, RX + RW - TILE - p.w);
+    }
 
     this.checkDoorTransition();
     this.updateEnemies();
